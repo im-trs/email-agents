@@ -128,7 +128,7 @@ def generate_response(client, email_data, edit_instructions=None):
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4",  # Use appropriate OpenAI model
+            model="gpt-4.1",  # Use appropriate OpenAI model
             messages=[
                 {
                     "role": "system", 
