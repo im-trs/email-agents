@@ -142,4 +142,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## 🙏 Acknowledgements
 
 - [OpenAI](https://openai.com/) for providing the GPT models that power the email analysis
-- All contributors and users of this project 
+- All contributors and users of this project
