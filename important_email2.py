@@ -219,7 +219,7 @@ def analyze_email_importance(client, email):
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4",  # Use appropriate OpenAI model
+            model="gpt-4.1",  # Use appropriate OpenAI model
             messages=[
                 {
                     "role": "system", 
