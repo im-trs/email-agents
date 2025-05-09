@@ -13,6 +13,7 @@ An AI-powered email management system that helps you achieve inbox zero by intel
 - **Automated Response Generation**: Drafts personalized responses to important emails
 - **Provider Agnostic**: Works with any email provider (Gmail, Outlook, etc.) through simple adapter functions
 - **Spam & Marketing Detection**: Intelligently filters out mass marketing emails from genuine opportunities
+- **Local LLM Support**: Option to use local LLMs for sensitive email processing to maintain privacy
 
 ## 📋 Components
 
@@ -27,7 +28,7 @@ The system consists of three main components:
 ### Prerequisites
 
 - Python 3.8+
-- OpenAI API key
+- OpenAI API key (or a local LLM for sensitive data)
 
 ### Installation
 
@@ -118,6 +119,38 @@ You can adjust the system's behavior by modifying constants at the top of each f
 - Modify file paths for generated reports
 - Adjust AI parameters for more detailed analysis
 
+## 📡 Using Local LLMs for Sensitive Data
+
+For processing sensitive emails that shouldn't be sent to external APIs, you can configure the system to use local LLMs:
+
+1. Modify the client creation in each file to use your local LLM instead of OpenAI:
+
+```python
+# Instead of:
+client = OpenAI()
+
+# Use your local LLM client:
+client = YourLocalLLMClient()  # Replace with your local LLM implementation
+```
+
+2. Update the model calls to match your local LLM's interface:
+
+```python
+# Modify model parameters to work with your local LLM
+response = client.generate(
+    model="your-local-model",  # Your local model name
+    prompt=prompt,             # Your prompt text
+    # Other parameters specific to your local LLM
+)
+```
+
+Popular local LLM options include:
+- [LlamaCpp](https://github.com/ggerganov/llama.cpp)
+- [Ollama](https://github.com/ollama/ollama)
+- [LocalAI](https://github.com/go-skynet/LocalAI)
+
+This approach ensures that sensitive email content never leaves your local environment.
+
 ## 📁 Output Files
 
 The system generates several output files:
@@ -130,6 +163,7 @@ The system generates several output files:
 
 - All API keys are stored in the `.env` file (not in Git)
 - The `.gitignore` file prevents sensitive data from being committed
+- For highly sensitive emails, use local LLMs instead of sending data to external APIs
 
 ## 🤝 Contributing
 
