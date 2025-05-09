@@ -166,7 +166,7 @@ def analyze_email(client, email):
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4",  # Use appropriate OpenAI model
+            model="gpt-4.1",  # Use appropriate OpenAI model
             messages=[
                 {
                     "role": "system", 
