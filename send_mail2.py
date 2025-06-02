@@ -5,6 +5,10 @@ from datetime import datetime, timedelta
 from openai import OpenAI
 from pydantic import BaseModel
 from typing import Optional, Literal
+import imaplib
+import email
+import smtplib
+from email.message import EmailMessage
 
 # Load environment variables
 load_dotenv(override=True)
@@ -21,67 +25,87 @@ EMAILS_FILE = "emails.txt"
 CATEGORIZED_EMAILS_JSON = "categorized_emails.json"
 OPPORTUNITY_REPORT = "opportunity_report.txt"
 
-# Function that should be implemented by the user
-def send_email(subject, body, recipient_email):
-    """
-    PLACEHOLDER: User should implement this function to send emails
-    
-    This function should:
-    1. Connect to the user's email provider
-    2. Send an email to the specified recipient
-    
-    Args:
-        subject: Email subject
-        body: Email body content
-        recipient_email: Recipient's email address
-        
-    Returns:
-        bool: True if the email was sent successfully, False otherwise
-    """
-    print(f"PLACEHOLDER: This function should send an email with subject '{subject}' to {recipient_email}")
-    print("Implement this function to connect to your email provider")
-    
-    # For testing purposes, just print the email
-    print("\n----- EMAIL CONTENT -----")
-    print(f"To: {recipient_email}")
-    print(f"Subject: {subject}")
-    print(f"Body:\n{body}")
-    print("-" * 30)
-    
-    # Return True to simulate successful sending
+# Function that actually sends an email via SMTP
+def send_email_via_smtp(subject: str, body: str, recipient_email: str) -> bool:
+    username = os.getenv("EMAIL_USER")
+    password = os.getenv("EMAIL_PASSWORD")
+    server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    port = int(os.getenv("SMTP_PORT", "465"))
+
+    if not username or not password:
+        raise ValueError("EMAIL_USER and EMAIL_PASSWORD must be set")
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = username
+    msg["To"] = recipient_email
+    msg.set_content(body)
+
+    with smtplib.SMTP_SSL(server, port) as smtp:
+        smtp.login(username, password)
+        smtp.send_message(msg)
+
     return True
 
+# Backwards compatibility
+def send_email(subject: str, body: str, recipient_email: str) -> bool:
+    return send_email_via_smtp(subject, body, recipient_email)
+
 # Function that should be implemented by the user
-def get_emails(hours=72):
-    """
-    PLACEHOLDER: User should implement this function to fetch emails from their provider
-    
-    This function should:
-    1. Connect to the user's email provider
-    2. Fetch emails from the last {hours} hours
-    3. Save basic email data to EMAILS_FILE in the format:
-       Subject: <subject>
-       From: <sender name> <sender_email>
-       Received: <datetime>
-       Body: <email body>
-       ------------------------------------------------
-    
-    Args:
-        hours: Number of hours to look back for emails
-        
-    Returns:
-        List of email dictionary objects with keys:
-        - subject: Email subject
-        - from: Sender information
-        - receivedDateTime: When the email was received
-        - body: Email body content
-    """
-    print(f"PLACEHOLDER: This function should fetch emails from the last {hours} hours")
-    print("Implement this function to connect to your email provider")
-    
-    # Return empty list as placeholder
-    # When implementing, return actual email data from your provider
-    return []
+def fetch_recent_inbox_emails(hours: int = 72):
+    """Fetch emails from the inbox using IMAP."""
+    username = os.getenv("EMAIL_USER")
+    password = os.getenv("EMAIL_PASSWORD")
+    server = os.getenv("IMAP_SERVER", "imap.gmail.com")
+    port = int(os.getenv("IMAP_PORT", "993"))
+
+    if not username or not password:
+        raise ValueError("EMAIL_USER and EMAIL_PASSWORD must be set")
+
+    cutoff = (datetime.utcnow() - timedelta(hours=hours)).strftime("%d-%b-%Y")
+    emails = []
+    with imaplib.IMAP4_SSL(server, port) as imap:
+        imap.login(username, password)
+        imap.select("INBOX")
+        status, data = imap.search(None, f'(SINCE "{cutoff}")')
+        if status != "OK":
+            return []
+        for num in data[0].split():
+            status, msg_data = imap.fetch(num, "(RFC822)")
+            if status != "OK":
+                continue
+            msg = email.message_from_bytes(msg_data[0][1])
+            body = ""
+            if msg.is_multipart():
+                for part in msg.walk():
+                    if part.get_content_type() == "text/plain" and not part.get("Content-Disposition"):
+                        charset = part.get_content_charset() or "utf-8"
+                        body = part.get_payload(decode=True).decode(charset, errors="replace")
+                        break
+            else:
+                charset = msg.get_content_charset() or "utf-8"
+                body = msg.get_payload(decode=True).decode(charset, errors="replace")
+
+            emails.append({
+                "subject": msg.get("Subject", ""),
+                "from": msg.get("From", ""),
+                "received": msg.get("Date", ""),
+                "body": body.strip()
+            })
+
+    with open(EMAILS_FILE, "w", encoding="utf-8") as f:
+        for email_item in emails:
+            f.write(f"Subject: {email_item['subject']}\n")
+            f.write(f"From: {email_item['from']}\n")
+            f.write(f"Received: {email_item['received']}\n")
+            f.write(f"Body: {email_item['body']}\n")
+            f.write("-" * 50 + "\n")
+
+    return emails
+
+# Backwards compatibility
+def get_emails(hours: int = 72):
+    return fetch_recent_inbox_emails(hours)
 
 def read_emails():
     """Read emails from emails.txt and return as a list of dictionaries"""
