@@ -37,12 +37,12 @@ This project helps you reach **inbox zero**. It uses OpenAI models to scan your 
    ```bash
    python important_email2.py
    ```
-   Generates `needs_response_report.txt` with the messages that require your reply.
+   Generates `output/needs_response_report.json` with the messages that require your reply.
 2. **Categorize business opportunities**
    ```bash
    python send_mail2.py
    ```
-   Writes results to `categorized_emails.json` and an opportunity report.
+   Writes results to `output/categorized_emails.json` and an opportunity report.
 3. **Draft and send responses**
    ```bash
    python email_responder2.py
@@ -53,7 +53,7 @@ This project helps you reach **inbox zero**. It uses OpenAI models to scan your 
 
 - Run `pytest` to execute the unit tests.
 - Modify the scripts or create new modules as needed. The IMAP/SMTP functions already handle fetching and sending email (see `important_email2.py` and `send_mail2.py`). Environment variable names are the same ones used in `.env.example`.
-- Keep data files such as `needs_response_report.txt` and `categorized_emails.json` out of version control.
+- Keep data files such as those in the `output/` folder out of version control.
 
 ## 🙋 How to use (non‑technical overview)
 
@@ -70,10 +70,10 @@ This project helps you reach **inbox zero**. It uses OpenAI models to scan your 
 
 ## 📁 Output files
 
-- `needs_response_report.txt` – list of messages requiring a reply
-- `categorized_emails.json` – JSON export of analyzed emails
-- `opportunity_report.txt` – summary of good business leads
-- `response_history.json` – log of emails you have answered
+- `output/needs_response_report.json` – list of messages requiring a reply
+- `output/categorized_emails.json` – JSON export of analyzed emails
+- `output/opportunity_report.json` – summary of good business leads
+- `output/response_history.json` – log of emails you have answered
 
 ## 🛡️ Security
 

@@ -21,9 +21,18 @@ class EmailAnalysis(BaseModel):
     topic: Optional[str] = None
 
 # File paths
-EMAILS_FILE = "emails.txt"
-CATEGORIZED_EMAILS_JSON = "categorized_emails.json"
-OPPORTUNITY_REPORT = "opportunity_report.txt"
+OUTPUT_DIR = "output"
+EMAILS_FILE = os.path.join(OUTPUT_DIR, "emails.json")
+CATEGORIZED_EMAILS_JSON = os.path.join(OUTPUT_DIR, "categorized_emails.json")
+OPPORTUNITY_REPORT = os.path.join(OUTPUT_DIR, "opportunity_report.json")
+LOG_FILE = os.path.join(OUTPUT_DIR, "send_mail2.log")
+
+
+def log(message):
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{datetime.now().isoformat()} - {message}\n")
+    print(message)
 
 # Function that actually sends an email via SMTP
 def send_email_via_smtp(subject: str, body: str, recipient_email: str) -> bool:
@@ -94,12 +103,8 @@ def fetch_recent_inbox_emails(hours: int = 72):
             })
 
     with open(EMAILS_FILE, "w", encoding="utf-8") as f:
-        for email_item in emails:
-            f.write(f"Subject: {email_item['subject']}\n")
-            f.write(f"From: {email_item['from']}\n")
-            f.write(f"Received: {email_item['received']}\n")
-            f.write(f"Body: {email_item['body']}\n")
-            f.write("-" * 50 + "\n")
+        json.dump(emails, f, indent=2)
+    log("Saved fetched emails")
 
     return emails
 
@@ -108,53 +113,15 @@ def get_emails(hours: int = 72):
     return fetch_recent_inbox_emails(hours)
 
 def read_emails():
-    """Read emails from emails.txt and return as a list of dictionaries"""
+    """Read emails from emails.json and return as a list of dictionaries"""
     try:
         with open(EMAILS_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-    except FileNotFoundError:
-        print(f"No {EMAILS_FILE} file found. Creating empty file.")
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        log(f"No {EMAILS_FILE} file found. Creating empty file.")
         with open(EMAILS_FILE, "w", encoding="utf-8") as f:
-            f.write("")
+            json.dump([], f)
         return []
-    
-    emails = []
-    current_email = {}
-    current_body_lines = []
-    
-    for line in lines:
-        line = line.rstrip()  # Remove trailing whitespace but keep leading whitespace
-        
-        if line.startswith("Subject: "):
-            if current_email:  # Save previous email
-                # Join body lines and clean up excessive whitespace
-                current_email["body"] = "\n".join(
-                    line for line in current_body_lines if line.strip()
-                )
-                emails.append(current_email)
-                current_body_lines = []
-            current_email = {"subject": line[9:], "from": "unknown"}  # Default 'from' to 'unknown'
-        elif line.startswith("From: "):
-            current_email["from"] = line[6:]
-        elif line.startswith("Received: "):
-            current_email["received"] = line[10:]
-        elif line.startswith("Body: "):
-            current_body_lines = [line[6:]]
-        elif line.startswith("-" * 50):
-            continue
-        else:
-            # Append non-marker lines to body
-            if current_body_lines is not None:
-                current_body_lines.append(line)
-            
-    # Don't forget to add the last email
-    if current_email:
-        current_email["body"] = "\n".join(
-            line for line in current_body_lines if line.strip()
-        )
-        emails.append(current_email)
-        
-    return emails
 
 def analyze_email(client, email):
     """Analyze a single email using OpenAI API with Structured Outputs"""
@@ -205,22 +172,22 @@ def analyze_email(client, email):
         if content:
             analysis = json.loads(content)
             # Print for debugging
-            print(f"\nAnalyzing: {email['subject']}")
-            print(f"Analysis result: {json.dumps(analysis, indent=2)}")
+            log(f"Analyzing: {email['subject']}")
+            log(f"Analysis result: {json.dumps(analysis, indent=2)}")
             return EmailAnalysis(**analysis)
         else:
-            print(f"Empty response for email: {email['subject']}")
+            log(f"Empty response for email: {email['subject']}")
             return None
             
     except Exception as e:
-        print(f"Error analyzing email: {e}")
-        print(f"Failed email subject: {email['subject']}")
+        log(f"Error analyzing email: {e}")
+        log(f"Failed email subject: {email['subject']}")
         return None
 
 def sort_emails():
     """Main function to sort emails"""
     # First fetch new emails
-    print("Fetching new emails...")
+    log("Fetching new emails...")
     get_emails(hours=72)
     
     # Initialize OpenAI client
@@ -263,27 +230,28 @@ def sort_emails():
     
     with open(CATEGORIZED_EMAILS_JSON, "w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=2)
+    log("Saved categorized_emails.json")
     
     # Print summary
-    print(f"\nProcessed {len(emails)} emails")
-    print(f"Sponsorship requests: {len(sponsorship_emails)}")
-    print(f"Business inquiries: {len(business_emails)}")
-    print(f"Other emails: {len(other_emails)}")
-    print(f"\nDetailed results saved to: {CATEGORIZED_EMAILS_JSON}")
+    log(f"Processed {len(emails)} emails")
+    log(f"Sponsorship requests: {len(sponsorship_emails)}")
+    log(f"Business inquiries: {len(business_emails)}")
+    log(f"Other emails: {len(other_emails)}")
+    log(f"Detailed results saved to: {CATEGORIZED_EMAILS_JSON}")
     
     # Print high-confidence business and sponsorship emails
-    print("\nHigh Confidence Business/Sponsorship Emails (>0.8):")
+    log("High Confidence Business/Sponsorship Emails (>0.8):")
     for email in sponsorship_emails + business_emails:
         if email["analysis"]["confidence"] > 0.8:
-            print(f"\nCategory: {email['analysis']['category']}")
-            print(f"From: {email['from']}")
-            print(f"Subject: {email['subject']}")
+            log(f"Category: {email['analysis']['category']}")
+            log(f"From: {email['from']}")
+            log(f"Subject: {email['subject']}")
             if email["analysis"]["company_name"]:
-                print(f"Company: {email['analysis']['company_name']}")
+                log(f"Company: {email['analysis']['company_name']}")
             if email["analysis"]["topic"]:
-                print(f"Topic: {email['analysis']['topic']}")
-            print(f"Reason: {email['analysis']['reason']}")
-            print("-" * 50)
+                log(f"Topic: {email['analysis']['topic']}")
+            log(f"Reason: {email['analysis']['reason']}")
+            log("-" * 50)
 
 def generate_opportunity_report(categorized_emails_path=CATEGORIZED_EMAILS_JSON):
     """Generate a structured report highlighting valuable business opportunities"""
@@ -299,14 +267,14 @@ def generate_opportunity_report(categorized_emails_path=CATEGORIZED_EMAILS_JSON)
         all_relevant_emails = business_emails + sponsorship_emails
         
         if not all_relevant_emails:
-            print("No business or sponsorship emails found to analyze.")
+            log("No business or sponsorship emails found to analyze.")
             return
             
         # Initialize OpenAI client
         client = OpenAI()
         
         # Analyze emails to identify quality opportunities
-        print("\nAnalyzing business and sponsorship emails for quality opportunities...")
+        log("Analyzing business and sponsorship emails for quality opportunities...")
         
         # Create a report with AI analysis
         prompt = f"""
@@ -353,24 +321,20 @@ def generate_opportunity_report(categorized_emails_path=CATEGORIZED_EMAILS_JSON)
         
         report = response.choices[0].message.content
         
-        # Print the report
-        print("\n" + "="*50)
-        print("BUSINESS AND SPONSORSHIP OPPORTUNITY REPORT")
-        print("="*50 + "\n")
-        print(report)
-        
-        # Save the report to a file
+        log("BUSINESS AND SPONSORSHIP OPPORTUNITY REPORT")
+        log(report)
+
         with open(OPPORTUNITY_REPORT, "w", encoding="utf-8") as f:
-            f.write("BUSINESS AND SPONSORSHIP OPPORTUNITY REPORT\n")
-            f.write("="*50 + "\n\n")
-            f.write(report)
-            
-        print(f"\nReport saved to {OPPORTUNITY_REPORT}")
+            json.dump({
+                "generated_on": datetime.now().isoformat(),
+                "report": report
+            }, f, indent=2)
+        log(f"Report saved to {OPPORTUNITY_REPORT}")
             
     except FileNotFoundError:
-        print(f"Error: File {categorized_emails_path} not found. Please run sort_emails() first.")
+        log(f"Error: File {categorized_emails_path} not found. Please run sort_emails() first.")
     except Exception as e:
-        print(f"Error generating opportunity report: {e}")
+        log(f"Error generating opportunity report: {e}")
 
 if __name__ == "__main__":
     # First sort the emails

@@ -22,10 +22,21 @@ class EmailImportance(BaseModel):
     topics: List[str]
 
 # File paths
+OUTPUT_DIR = "output"
 RECENT_EMAILS_FILE = "recent_emails.txt"
-RESPONSE_HISTORY_FILE = "response_history.json"
-NEEDS_RESPONSE_JSON = "needs_response_emails.json"
-NEEDS_RESPONSE_REPORT = "needs_response_report.txt"
+RESPONSE_HISTORY_FILE = os.path.join(OUTPUT_DIR, "response_history.json")
+NEEDS_RESPONSE_JSON = os.path.join(OUTPUT_DIR, "needs_response_emails.json")
+NEEDS_RESPONSE_REPORT = os.path.join(OUTPUT_DIR, "needs_response_report.json")
+TOPIC_REPORT_FILE = os.path.join(OUTPUT_DIR, "topic_report.json")
+TO_DELETE_FILE = os.path.join(OUTPUT_DIR, "to_delete.json")
+LOG_FILE = os.path.join(OUTPUT_DIR, "important_email2.log")
+
+
+def log(message):
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{datetime.now().isoformat()} - {message}\n")
+    print(message)
 
 def load_response_history():
     """Load history of emails we've already responded to"""
@@ -43,9 +54,54 @@ def save_response_history(history, new_response=None):
             "from": new_response["from"],
             "responded_at": datetime.now().isoformat()
         })
-    
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(RESPONSE_HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
+
+def group_emails_by_topics(emails):
+    """Group analyzed emails by their topics."""
+    topic_map = {}
+    for email in emails:
+        topics = email.get("analysis", {}).get("topics", [])
+        for topic in topics:
+            topic_map.setdefault(topic, []).append({
+                "subject": email.get("subject"),
+                "from": email.get("from"),
+                "importance": email.get("analysis", {}).get("importance"),
+                "needs_response": email.get("analysis", {}).get("needs_response")
+            })
+    return topic_map
+
+def load_delete_tasks(tasks_file=TO_DELETE_FILE):
+    try:
+        with open(tasks_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+def save_delete_tasks(tasks, tasks_file=TO_DELETE_FILE):
+    os.makedirs(os.path.dirname(tasks_file), exist_ok=True)
+    with open(tasks_file, "w", encoding="utf-8") as f:
+        json.dump(tasks, f, indent=2)
+
+def update_delete_tasks(email, analysis, tasks_file=TO_DELETE_FILE):
+    if analysis.importance != "low" or analysis.needs_response:
+        return
+
+    tasks = load_delete_tasks(tasks_file)
+    # avoid duplicates
+    for task in tasks:
+        if task.get("subject") == email.get("subject") and task.get("from") == email.get("from"):
+            return
+
+    tasks.append({
+        "subject": email.get("subject"),
+        "from": email.get("from"),
+        "received": email.get("received"),
+        "status": "to review"
+    })
+    save_delete_tasks(tasks, tasks_file)
 
 def is_previously_responded(email, sent_emails):
     """Check if we've already responded to this email"""
@@ -295,11 +351,11 @@ def analyze_email_importance(client, email):
 def find_important_emails():
     """Main function to identify important emails"""
     # First fetch new emails from the last 24 hours
-    print("Fetching emails from the last 24 hours...")
+    log("Fetching emails from the last 24 hours...")
     get_emails(hours=24)
     
     # Get sent emails from the past week to check for responses
-    print("Checking sent folder for previous responses...")
+    log("Checking sent folder for previous responses...")
     sent_emails = get_sent_emails(days=7)
     
     # Initialize OpenAI client
@@ -308,106 +364,94 @@ def find_important_emails():
     # Read emails
     emails = read_emails()
     
-    # Prepare to store only emails that need a response
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    # Prepare to store analyzed emails
+    all_emails = []
     needs_response_emails = []
     
     # Analyze each email
     for email in emails:
         # Check if we've already responded to this email by looking at sent items
         already_responded = is_previously_responded(email, sent_emails)
-        
+
         analysis = analyze_email_importance(client, email)
-        if analysis and analysis.needs_response:
-            email_data = {
-                "subject": email["subject"],
-                "from": email["from"],
-                "received": email.get("received", datetime.now().isoformat()),
-                "body": email["body"][:1000] + ("..." if len(email["body"]) > 1000 else ""),  # Truncate for readability
-                "analysis": analysis.model_dump(),
-                "already_responded": already_responded
-            }
-            
+        if not analysis:
+            log(f"Failed to analyze email: {email['subject']}")
+            continue
+
+        email_data = {
+            "subject": email["subject"],
+            "from": email["from"],
+            "received": email.get("received", datetime.now().isoformat()),
+            "body": email["body"][:1000] + ("..." if len(email["body"]) > 1000 else ""),
+            "analysis": analysis.model_dump(),
+            "already_responded": already_responded
+        }
+
+        all_emails.append(email_data)
+
+        if analysis.needs_response:
             needs_response_emails.append(email_data)
+            log(f"Email requires response: {email['subject']}")
+
+        update_delete_tasks(email_data, analysis, tasks_file=TO_DELETE_FILE)
+        log(f"Processed email: {email['subject']}")
     
-    # Save results to JSON file
+    # Save results to JSON files
     output_data = {
         "last_updated": datetime.now().isoformat(),
         "needs_response_emails": needs_response_emails
     }
-    
+
     with open(NEEDS_RESPONSE_JSON, "w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=2)
-    
-    # Print summary
-    print(f"\nProcessed {len(emails)} emails from the last 24 hours")
-    print(f"Emails requiring response: {len(needs_response_emails)}")
-    already_responded_count = sum(1 for email in needs_response_emails if email["already_responded"])
-    print(f"Previously responded to: {already_responded_count}")
-    print(f"New emails requiring response: {len(needs_response_emails) - already_responded_count}")
-    print(f"\nDetailed results saved to: {NEEDS_RESPONSE_JSON}")
-    
-    # Generate a readable report
-    with open(NEEDS_RESPONSE_REPORT, "w", encoding="utf-8") as f:
-        f.write("==================================================\n")
-        f.write("EMAILS REQUIRING RESPONSE\n")
-        f.write(f"Generated on: {datetime.now().isoformat()}\n")
-        f.write("==================================================\n\n")
-        
-        if needs_response_emails:
-            # Sort by already_responded (not responded first), then time sensitivity, then importance
-            sorted_emails = sorted(
-                needs_response_emails, 
-                key=lambda x: (
-                    x["already_responded"],  # Not responded first
-                    not x['analysis']['time_sensitive'],  # Time sensitive first
-                    0 if x['analysis']['importance'] == 'high' else 
-                    1 if x['analysis']['importance'] == 'medium' else 2  # Order by importance
-                )
-            )
-            
-            for email in sorted_emails:
-                f.write(f"Subject: {email['subject']}\n")
-                f.write(f"From: {email['from']}\n")
-                f.write(f"Received: {email['received']}\n")
-                f.write(f"Importance: {email['analysis']['importance'].upper()}\n")
-                f.write(f"Time Sensitive: {'YES' if email['analysis']['time_sensitive'] else 'No'}\n")
-                f.write(f"Topics: {', '.join(email['analysis']['topics'])}\n")
-                f.write(f"Reason: {email['analysis']['reason']}\n")
-                if email["already_responded"]:
-                    f.write(f"STATUS: ✅ ALREADY RESPONDED\n")
-                f.write(f"Preview: {email['body'][:300]}...\n\n")
-                f.write("-" * 50 + "\n\n")
-        else:
-            f.write("No emails requiring immediate response were found.\n\n")
-    
-    # Print emails requiring response to console
-    if needs_response_emails:
-        print("\nEMAILS REQUIRING RESPONSE:\n" + "="*50)
-        # Sort by already_responded (not responded first), then time sensitivity, then importance
-        sorted_emails = sorted(
-            needs_response_emails, 
-            key=lambda x: (
-                x["already_responded"],  # Not responded first
-                not x['analysis']['time_sensitive'],  # Time sensitive first
-                0 if x['analysis']['importance'] == 'high' else 
-                1 if x['analysis']['importance'] == 'medium' else 2  # Order by importance
-            )
+    log("Saved needs_response_emails.json")
+
+    # Group by topics for a separate report
+    topic_report = {
+        "last_updated": datetime.now().isoformat(),
+        "topics": group_emails_by_topics(all_emails)
+    }
+
+    with open(TOPIC_REPORT_FILE, "w", encoding="utf-8") as f:
+        json.dump(topic_report, f, indent=2)
+    log("Saved topic_report.json")
+
+    # Write needs-response report as JSON summary
+    sorted_emails = sorted(
+        needs_response_emails,
+        key=lambda x: (
+            x["already_responded"],
+            not x['analysis']['time_sensitive'],
+            0 if x['analysis']['importance'] == 'high' else 1 if x['analysis']['importance'] == 'medium' else 2
         )
-        
-        for email in sorted_emails:
-            print(f"\nSubject: {email['subject']}")
-            print(f"From: {email['from']}")
-            print(f"Importance: {email['analysis']['importance'].upper()}")
-            print(f"Time Sensitive: {'YES' if email['analysis']['time_sensitive'] else 'No'}")
-            print(f"Topics: {', '.join(email['analysis']['topics'])}")
-            if email["already_responded"]:
-                print(f"STATUS: ✅ ALREADY RESPONDED")
-            print(f"Reason: {email['analysis']['reason']}")
-            print("-" * 50)
-    else:
-        print("\nNo emails requiring immediate response were found.")
+    )
+
+    with open(NEEDS_RESPONSE_REPORT, "w", encoding="utf-8") as f:
+        json.dump({
+            "generated_on": datetime.now().isoformat(),
+            "emails": sorted_emails
+        }, f, indent=2)
+    log("Saved needs_response_report.json")
+
+    # Print summary
+    log(f"Processed {len(emails)} emails from the last 24 hours")
+    log(f"Emails requiring response: {len(needs_response_emails)}")
+    already_responded_count = sum(1 for email in needs_response_emails if email["already_responded"])
+    log(f"Previously responded to: {already_responded_count}")
+    log(f"New emails requiring response: {len(needs_response_emails) - already_responded_count}")
+    log(f"Detailed results saved to: {NEEDS_RESPONSE_JSON}")
     
-    print(f"\nFull report available in {NEEDS_RESPONSE_REPORT}")
+    # Print summary of important emails to console
+    if needs_response_emails:
+        log("EMAILS REQUIRING RESPONSE:")
+        for email in sorted_emails:
+            log(f"{email['subject']} - {email['from']} ({email['analysis']['importance']})")
+    else:
+        log("No emails requiring immediate response were found.")
+
+    log(f"Full report available in {NEEDS_RESPONSE_REPORT}")
 
 if __name__ == "__main__":
     find_important_emails() 
