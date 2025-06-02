@@ -145,7 +145,9 @@ def fetch_recent_sent_emails(days: int = 7):
     sent_emails = []
     with imaplib.IMAP4_SSL(server, port) as imap:
         imap.login(username, password)
-        imap.select(sent_folder)
+        status, _ = imap.select(sent_folder)
+        if status != "OK":
+            return []
         status, data = imap.search(None, f'(SINCE "{cutoff}")')
         if status != "OK":
             return []
