@@ -6,6 +6,10 @@ from openai import OpenAI
 from pydantic import BaseModel
 from typing import List, Optional, Literal
 import re
+import imaplib
+import email
+import smtplib
+from email.message import EmailMessage
 
 # Load environment variables
 load_dotenv(override=True)
@@ -69,63 +73,103 @@ def is_previously_responded(email, sent_emails):
     
     return False
 
-# Function that should be implemented by the user to fetch emails
-def get_emails(hours=24):
-    """
-    PLACEHOLDER: User should implement this function to fetch emails from their provider
-    
-    This function should:
-    1. Connect to the user's email provider
-    2. Fetch emails from the last {hours} hours
-    3. Save basic email data to RECENT_EMAILS_FILE in the format:
-       Subject: <subject>
-       From: <sender name> <sender_email>
-       Received: <datetime>
-       Body: <email body>
-       ------------------------------------------------
-    
-    Args:
-        hours: Number of hours to look back for emails
-        
-    Returns:
-        List of email dictionary objects with keys:
-        - subject: Email subject
-        - from: Sender information
-        - receivedDateTime: When the email was received
-        - body: Email body content
-    """
-    print(f"PLACEHOLDER: This function should fetch emails from the last {hours} hours")
-    print("Implement this function to connect to your email provider")
-    
-    # Return empty list as placeholder
-    # When implementing, return actual email data from your provider
-    return []
+def fetch_recent_inbox_emails(hours: int = 24):
+    """Fetch emails from the inbox using IMAP."""
+    username = os.getenv("EMAIL_USER")
+    password = os.getenv("EMAIL_PASSWORD")
+    server = os.getenv("IMAP_SERVER", "imap.gmail.com")
+    port = int(os.getenv("IMAP_PORT", "993"))
+
+    if not username or not password:
+        raise ValueError("EMAIL_USER and EMAIL_PASSWORD must be set")
+
+    cutoff = (datetime.utcnow() - timedelta(hours=hours)).strftime("%d-%b-%Y")
+
+    emails = []
+    with imaplib.IMAP4_SSL(server, port) as imap:
+        imap.login(username, password)
+        imap.select("INBOX")
+        status, data = imap.search(None, f'(SINCE "{cutoff}")')
+        if status != "OK":
+            return []
+        for num in data[0].split():
+            status, msg_data = imap.fetch(num, "(RFC822)")
+            if status != "OK":
+                continue
+            msg = email.message_from_bytes(msg_data[0][1])
+            body = ""
+            if msg.is_multipart():
+                for part in msg.walk():
+                    if part.get_content_type() == "text/plain" and not part.get("Content-Disposition"):
+                        charset = part.get_content_charset() or "utf-8"
+                        body = part.get_payload(decode=True).decode(charset, errors="replace")
+                        break
+            else:
+                charset = msg.get_content_charset() or "utf-8"
+                body = msg.get_payload(decode=True).decode(charset, errors="replace")
+
+            emails.append({
+                "subject": msg.get("Subject", ""),
+                "from": msg.get("From", ""),
+                "received": msg.get("Date", ""),
+                "body": body.strip()
+            })
+
+    with open(RECENT_EMAILS_FILE, "w", encoding="utf-8") as f:
+        for email_item in emails:
+            f.write(f"Subject: {email_item['subject']}\n")
+            f.write(f"From: {email_item['from']}\n")
+            f.write(f"Received: {email_item['received']}\n")
+            f.write(f"Body: {email_item['body']}\n")
+            f.write("-" * 50 + "\n")
+
+    return emails
+
+# Backwards compatibility
+def get_emails(hours: int = 24):
+    return fetch_recent_inbox_emails(hours)
 
 # Function that should be implemented by the user to get sent emails
-def get_sent_emails(days=7):
-    """
-    PLACEHOLDER: User should implement this function to fetch sent emails
-    
-    This function should:
-    1. Connect to the user's email provider
-    2. Fetch sent emails from the past {days} days
-    3. Return data about sent emails to check for previous responses
-    
-    Args:
-        days: Number of days to look back for sent emails
-        
-    Returns:
-        List of sent email dictionary objects with keys:
-        - subject: Email subject
-        - recipients: List of recipient email addresses
-        - sent_time: When the email was sent
-    """
-    print(f"PLACEHOLDER: This function should fetch sent emails from the last {days} days")
-    print("Implement this function to connect to your email provider")
-    
-    # Return empty list as placeholder
-    # When implementing, return actual sent email data from your provider
-    return []
+def fetch_recent_sent_emails(days: int = 7):
+    """Fetch sent emails using IMAP."""
+    username = os.getenv("EMAIL_USER")
+    password = os.getenv("EMAIL_PASSWORD")
+    server = os.getenv("IMAP_SERVER", "imap.gmail.com")
+    port = int(os.getenv("IMAP_PORT", "993"))
+    sent_folder = os.getenv("IMAP_SENT_FOLDER", "[Gmail]/Sent Mail")
+
+    if not username or not password:
+        raise ValueError("EMAIL_USER and EMAIL_PASSWORD must be set")
+
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%d-%b-%Y")
+    sent_emails = []
+    with imaplib.IMAP4_SSL(server, port) as imap:
+        imap.login(username, password)
+        imap.select(sent_folder)
+        status, data = imap.search(None, f'(SINCE "{cutoff}")')
+        if status != "OK":
+            return []
+        for num in data[0].split():
+            status, msg_data = imap.fetch(num, "(RFC822)")
+            if status != "OK":
+                continue
+            msg = email.message_from_bytes(msg_data[0][1])
+            recipients = []
+            to_field = msg.get_all("To", [])
+            cc_field = msg.get_all("Cc", [])
+            for addr in email.utils.getaddresses(to_field + cc_field):
+                recipients.append(addr[1])
+            sent_emails.append({
+                "subject": msg.get("Subject", ""),
+                "recipients": recipients,
+                "sent_time": msg.get("Date", "")
+            })
+
+    return sent_emails
+
+# Backwards compatibility
+def get_sent_emails(days: int = 7):
+    return fetch_recent_sent_emails(days)
 
 def read_emails():
     """Read emails from recent_emails.txt and return as a list of dictionaries"""
