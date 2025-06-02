@@ -12,11 +12,10 @@ def test_env_example_contents():
         content = f.read()
     # expected keys
     required_keys = [
-        'ONE_EMAIL',
-        'ONE_USERNAME',
-        'ONE_PASSWORD',
-        'ONE_IMAP_SERVER',
-        'ONE_SMTP_SERVER'
+        'EMAIL_USER',
+        'EMAIL_PASSWORD',
+        'IMAP_SERVER',
+        'SMTP_SERVER'
     ]
     for key in required_keys:
         assert re.search(rf'^{key}=.*', content, re.MULTILINE), f"Missing {key} in .env.example"
